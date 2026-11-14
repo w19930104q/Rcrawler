@@ -10,10 +10,16 @@
 #' @param ExcludeCSSPat character vector, one or more Css pattern to exclude from extracted content.
 #' @param astext boolean, default is TRUE, HTML and PHP tags is stripped from the extracted piece.
 #' @param asDataFrame boolean, transform scraped data into a Dataframe. default is False (data is returned as List)
+#' @param ContainerXpathPat character, one XPath pattern selecting the repeating card/container elements (e.g. a comment box, a review or a listing row). When supplied, the grouped extraction mode is enabled: each matched container produces one record, the other XpathPatterns are evaluated relatively to each container, fields are returned in their declared order and a field missing from a container becomes NA. Nested structures matched by ExcludeXpathPat (quotes, ads) are removed node-wise before extraction, so sibling containers cannot share or leak values. Grouped mode always returns a data.frame and is disabled unless a container pattern is provided.
+#' @param ContainerCssPat character, same as ContainerXpathPat using a CSS selector. Use it together with CssPatterns and ExcludeCSSPat.
 #' @param browser, a web driver session, or a loggedin session of the web driver (see examples)
 #' @param encod character, set the weppage character encoding.
 #' @return
-#' return a named list of scraped content
+#' return a named list of scraped content. When grouped extraction is enabled
+#' (ContainerXpathPat/ContainerCssPat supplied) the return value is a
+#' data.frame with one row per container and one column per pattern, in
+#' declared order, with NA for missing fields; with several Urls the rows of
+#' each page are appended in the input order.
 #' @author salim khalil
 #' @examples
 #' \dontrun{
@@ -58,6 +64,16 @@
 #' CssPatterns = c("head > title",".post"), ExcludeCSSPat = c(".quote",".quoteheader"),
 #' PatternsName = c("Title","Replys"), ManyPerPattern = TRUE)
 #'
+#' #### Grouped extraction: one record per comment card.
+#' # Each .comment container becomes a row; author/date/body queries run
+#' # inside its own subtree, a missing date is NA and nested quotes/ads are
+#' # removed structurally instead of being stripped by string replacement.
+#' DATA<-ContentScraper(Url = "https://example.org/comments",
+#' CssPatterns = c(".author",".date",".body"),
+#' PatternsName = c("author","date","body"),
+#' ContainerCssPat = ".comment",
+#' ExcludeCSSPat = c(".quote",".ads"))
+#'
 #' #### Scrape data from web page requiring authentification
 #' # replace \@ by @ before running follwing examples
 #' # create a loggedin session
@@ -95,7 +111,8 @@
 #'
 #'
 ContentScraper <- function(Url, HTmlText, browser, XpathPatterns, CssPatterns, PatternsName,
-                           ExcludeXpathPat, ExcludeCSSPat, ManyPerPattern=FALSE, astext=TRUE, asDataFrame=FALSE, encod) {
+                           ExcludeXpathPat, ExcludeCSSPat, ManyPerPattern=FALSE, astext=TRUE, asDataFrame=FALSE, encod,
+                           ContainerXpathPat, ContainerCssPat) {
 
   if(!missing(Url) && !missing(HTmlText) ){
     stop("Please supply Url or HTmlText, not both !")
@@ -108,6 +125,30 @@ ContentScraper <- function(Url, HTmlText, browser, XpathPatterns, CssPatterns, P
   if(!missing(ExcludeXpathPat) && !missing(ExcludeCSSPat) ){
     stop("Please supply ExcludeXpathPat or ExcludeCSSPat, not both !")
   }
+
+  # Grouped (card-level) extraction mode, off by default: it activates only
+  # when a container pattern is explicitly supplied.
+  groupedMode <- !missing(ContainerXpathPat) || !missing(ContainerCssPat)
+  if (groupedMode) {
+    if (!missing(ContainerXpathPat) && !missing(ContainerCssPat)) {
+      stop("Please supply ContainerXpathPat or ContainerCssPat, not both !")
+    }
+    if (missing(XpathPatterns) && missing(CssPatterns)) {
+      stop("Grouped extraction requires field patterns (XpathPatterns or CssPatterns) in addition to the container pattern !")
+    }
+    if (!missing(ContainerCssPat) && missing(CssPatterns)) {
+      stop("ContainerCssPat must be used with CssPatterns (the same selector family) !")
+    }
+    if (!missing(ContainerXpathPat) && missing(XpathPatterns)) {
+      stop("ContainerXpathPat must be used with XpathPatterns (the same selector family) !")
+    }
+    if (!missing(ExcludeCSSPat) && !missing(XpathPatterns)) {
+      stop("ExcludeCSSPat cannot be combined with XpathPatterns; use ExcludeXpathPat in grouped XPath mode !")
+    }
+    if (!missing(ExcludeXpathPat) && !missing(CssPatterns)) {
+      stop("ExcludeXpathPat cannot be combined with CssPatterns; use ExcludeCSSPat in grouped CSS mode !")
+    }
+  }
   if(!missing(XpathPatterns) && !missing(PatternsName) ){
     if (length(XpathPatterns)!=length(PatternsName)) stop("PatternsName & XpathPatterns parameters must have the same length ")
   }
@@ -115,16 +156,61 @@ ContentScraper <- function(Url, HTmlText, browser, XpathPatterns, CssPatterns, P
     if (length(CssPatterns)!=length(PatternsName)) stop("PatternsName & CssPatterns parameters must have the same length ")
   }
 
-  if(!missing(ExcludeCSSPat)) {
-    if(is.vector(ExcludeCSSPat)){
-      ExcludeXpathPat<- unlist(lapply(ExcludeCSSPat, FUN = function(x) { tryCatch(selectr::css_to_xpath(x, prefix = "//") ,error=function(e) stop("Unable to translate supplied css selector, Please check CssPatterns syntax !"))}))
+  if (groupedMode) {
+    useCssGrouped <- !missing(ContainerCssPat)
+    containerGrouped <- if (useCssGrouped) ContainerCssPat else ContainerXpathPat
+    patternsGrouped <- if (useCssGrouped) CssPatterns else XpathPatterns
+    excludesGrouped <- if (useCssGrouped) {
+      if (missing(ExcludeCSSPat)) character(0) else ExcludeCSSPat
+    } else {
+      if (missing(ExcludeXpathPat)) character(0) else ExcludeXpathPat
+    }
+    if (!is.vector(patternsGrouped) || length(patternsGrouped) < 1) {
+      stop("Grouped extraction requires at least one field pattern !")
+    }
+    fieldNamesGrouped <- if (!missing(PatternsName)) {
+      PatternsName
+    } else {
+      make.names(patternsGrouped, unique = TRUE)
+    }
+    # Default column names are syntactic names; validation messages keep
+    # the raw selector via a parallel label vector.
+    fieldLabelsGrouped <- if (!missing(PatternsName)) {
+      PatternsName
+    } else {
+      patternsGrouped
     }
   }
-  if(!missing(CssPatterns)) {
-    if(is.vector(CssPatterns)){
-      XpathPatterns<- unlist(lapply(CssPatterns, FUN = function(x) { tryCatch(selectr::css_to_xpath(x, prefix = "//") ,error=function(e) stop("Unable to translate supplied css selector, Please check CssPatterns syntax !"))}))
-    } else {
-      stop("CssPatterns parameter must be a vector with at least one element !")
+
+  if (groupedMode && missing(Url)) {
+    # HTmlText entry: same engine as the Url entry, so both yield identical
+    # results for the same document.
+    return(GroupedScrapeHtml(
+      html = HTmlText,
+      encod = if (missing(encod)) NULL else encod,
+      container = containerGrouped,
+      patterns = patternsGrouped,
+      excludes = excludesGrouped,
+      useCss = useCssGrouped,
+      astext = astext,
+      fieldNames = fieldNamesGrouped,
+      fieldLabels = fieldLabelsGrouped,
+      sourceLabel = "HTmlText"
+    ))
+  }
+
+  if (!groupedMode) {
+    if(!missing(ExcludeCSSPat)) {
+      if(is.vector(ExcludeCSSPat)){
+        ExcludeXpathPat<- unlist(lapply(ExcludeCSSPat, FUN = function(x) { tryCatch(selectr::css_to_xpath(x, prefix = "//") ,error=function(e) stop("Unable to translate supplied css selector, Please check CssPatterns syntax !"))}))
+      }
+    }
+    if(!missing(CssPatterns)) {
+      if(is.vector(CssPatterns)){
+        XpathPatterns<- unlist(lapply(CssPatterns, FUN = function(x) { tryCatch(selectr::css_to_xpath(x, prefix = "//") ,error=function(e) stop("Unable to translate supplied css selector, Please check CssPatterns syntax !"))}))
+      } else {
+        stop("CssPatterns parameter must be a vector with at least one element !")
+      }
     }
   }
 
@@ -138,7 +224,24 @@ ContentScraper <- function(Url, HTmlText, browser, XpathPatterns, CssPatterns, P
       pageinfo<-LinkExtractor(url=Ur, encod=encod, Browser = browser)
       }
       if(pageinfo$Info$Status_code==200){
-          HTmlText<-pageinfo[[1]][[10]]
+          if (groupedMode) {
+            # Same engine as the HTmlText entry; rows from successive URLs
+            # are appended in input order below. Named access keeps this
+            # branch independent of the legacy positional page layout.
+            HTmlText<-pageinfo$Info$Source_page
+            contentx <- GroupedScrapeHtml(
+              html = HTmlText,
+              encod = if (missing(encod)) NULL else encod,
+              container = containerGrouped,
+              patterns = patternsGrouped,
+              excludes = excludesGrouped,
+              useCss = useCssGrouped,
+              astext = astext,
+              fieldNames = fieldNamesGrouped,
+              fieldLabels = fieldLabelsGrouped,
+              sourceLabel = Ur
+            )
+          } else {
           x<-xml2::read_html(HTmlText, encoding = encod)
           if(ManyPerPattern){
 
@@ -241,10 +344,21 @@ ContentScraper <- function(Url, HTmlText, browser, XpathPatterns, CssPatterns, P
         }
 
       }
-      }else{
+      } # end of legacy (non-grouped) 200 branch
+      } else {
+        if (groupedMode) {
+          # A failed fetch cannot produce aligned rows; report the URL so
+          # the caller knows which page of the vector failed.
+          stop(sprintf("Unable to scrape '%s' in grouped mode: HTTP error code: %s",
+                       Ur, pageinfo$Info$Status_code), call. = FALSE)
+        }
         contentx<- paste0("HTTP error code:",pageinfo$Info$Status_code)
       }
-    if(length(Url)>1) content<-c(content,list(contentx))
+    if (groupedMode) {
+      # Keep the input URL order; every page contributes the same columns.
+      content <- if (length(content) == 0) contentx else rbind(content, contentx)
+      rownames(content) <- NULL
+    } else if(length(Url)>1) content<-c(content,list(contentx))
       else content<-c(content,contentx)
 
     cat(pos,"..", sep = "")

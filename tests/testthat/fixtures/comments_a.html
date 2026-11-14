@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Comments page A</title>
+<script>var tracker = "SCRIPT_SHOULD_NOT_APPEAR";</script></head>
+<body>
+<h1>Discussion A</h1>
+<div id="comments">
+
+  <div class="comment" id="c1">
+    <h3 class="author">Alice</h3>
+    <span class="date">2024-01-01</span>
+    <blockquote class="quote">
+      <div class="comment">
+        <h3 class="author">Nested Quoted Author</h3>
+        <p class="body">nested quoted body that must disappear with the quote</p>
+      </div>
+      <p>old quoted text</p>
+    </blockquote>
+    <ins class="ads">BUY THIS NESTED AD</ins>
+    <p class="body">First real comment body</p>
+  </div>
+
+  <div class="comment" id="c2">
+    <h3 class="author">Bob</h3>
+    <!-- no date on purpose: the date column must be NA -->
+    <p class="body">Second comment, missing its date</p>
+  </div>
+
+  <div class="comment" id="c3">
+    <h3 class="author">Carol</h3>
+    <span class="date">2024-01-03</span>
+    <!-- no body on purpose: the body column must be NA -->
+    <span class="note">a note, not a body</span>
+  </div>
+
+</div>
+<div class="footer">Sibling outside any card: do not collect</div>
+</body>
+</html>

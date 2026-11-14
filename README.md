@@ -35,6 +35,7 @@ Retreive a password protected web page (HTML-based authentication) | run_browser
 ------------ | -------------| -------------
 Scrape one or many elements from a web page by XPath or CSS pattern (each element has one occurence in the page) | ContentScraper | XpathPatterns, CssPatterns, PatternsName
 Scrape one or many elements from a web page by XPath or CSS pattern *(each element can have many occurence in the page)* | ContentScraper |  XpathPatterns, CssPatterns, PatternsName, *ManyPerPattern*
+Scrape one aligned record per card/container (comments, reviews, listings); missing fields become NA, nested quotes/ads removed structurally; off unless a container pattern is given | ContentScraper | *ContainerCssPat / ContainerXpathPat*, CssPatterns/XpathPatterns, PatternsName, ExcludeCSSPat/ExcludeXpathPat
 Scrape data from multiple web pages/URLs having a commun extraction patterns (pages from the same website) | ContentScraper | *Url= c("url1","url2")* vector of URLs, XpathPatterns, CssPatterns, PatternsName. 
 Scrape data from pages using webdriver (for javascript rendered pages)| run_browser, ContentScraper | ContentScraper(... browser=) 
 Scrape data from password protected (HTML-based authentication) | run_browser, LoginSession, ContentScraper | ContentScraper(... browser=)
@@ -395,9 +396,39 @@ If you have already a list of links of the same website and you want to scrape a
 ```
 DATA<-ContentScraper(Url = "https://bitcointalk.org/index.php?topic=2334331.0", CssPatterns = c(".post"), ExcludeCSSPat = c(".quote",".quoteheader"), PatternsName = c("posts"), ManyPerPattern = TRUE)
 ```
-From this Forum post Url we want to extract post title and all replies using CSS selectors c(".post"), However, we notice that each reply contain the previous reply as quote so we to exclude all quotes and quotes header (published by,date and time) from each extracted posts we use ExcludeCSSPat c(".quote",".quoteheader a") 
+From this Forum post Url we want to extract post title and all replies using CSS selectors c(".post"), However, we notice that each reply contain the previous reply as quote so we to exclude all quotes and quotes header (published by,date and time) from each extracted posts we use ExcludeCSSPat c(".quote",".quoteheader a")
 
-#### 10- Crawl/scrape IMDB website 
+###### 9-3- Grouped extraction: one aligned record per card (off by default)
+The default `ManyPerPattern` mode collects one vector per pattern. When a field is missing on some entries (e.g. a comment without a date), the columns can no longer be aligned row by row, and `ExcludeCSSPat` only strips matched text by string replacement. **Grouped extraction mode** fixes both issues for card-shaped pages (comments, reviews, listing rows): pass a container selector via `ContainerCssPat` (or `ContainerXpathPat`) and the mode is enabled.
+
+- each matched container produces **one row**;
+- every field pattern is evaluated **relatively to that container**, so sibling cards can never share or leak values;
+- columns follow the **declared pattern order** and a field absent from a card is **NA**;
+- `ExcludeCSSPat`/`ExcludeXpathPat` nodes (nested quotes, ads) are **removed structurally before extraction**, together with any nested container they hold;
+- the `Url` and `HTmlText` entries return the same result; with several URLs the rows are appended **in input order**;
+- a malformed selector raises an error naming the source (URL or `HTmlText`) and the offending field;
+- grouped mode always returns a `data.frame`. The legacy vector, `ManyPerPattern` and `asDataFrame` behaviour is unchanged when no container pattern is supplied.
+
+```
+# CSS entry
+DATA <- ContentScraper(Url = "https://example.org/comments",
+                       CssPatterns  = c(".author", ".date", ".body"),
+                       PatternsName = c("author", "date", "body"),
+                       ContainerCssPat = ".comment",
+                       ExcludeCSSPat   = c(".quote", ".ads"))
+
+# Equivalent XPath entry (relative ./ paths are also accepted for fields)
+DATA <- ContentScraper(Url = "https://example.org/comments",
+                       XpathPatterns = c("//*[contains(@class,'author')]",
+                                         "//span[contains(@class,'date')]",
+                                         "//p[contains(@class,'body')]"),
+                       PatternsName = c("author", "date", "body"),
+                       ContainerXpathPat = "//div[contains(@class,'comment')]",
+                       ExcludeXpathPat   = c("//blockquote[contains(@class,'quote')]",
+                                             "//ins[contains(@class,'ads')]"))
+```
+
+#### 10- Crawl/scrape IMDB website
 ###### Tuto 10-1: crawl and Collect all best movie's pages in imdb 2018 list  
  - crawlUrlfilter ="/title/" : crawl only movie pages
  - dataUrlfilter = "/title/" : collect only movie pages

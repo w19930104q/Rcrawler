@@ -6,7 +6,8 @@
 \usage{
 ContentScraper(Url, HTmlText, browser, XpathPatterns, CssPatterns,
   PatternsName, ExcludeXpathPat, ExcludeCSSPat, ManyPerPattern = FALSE,
-  astext = TRUE, asDataFrame = FALSE, encod)
+  astext = TRUE, asDataFrame = FALSE, encod, ContainerXpathPat,
+  ContainerCssPat)
 }
 \arguments{
 \item{Url}{character, one url or a vector of urls of web pages to scrape.}
@@ -31,10 +32,18 @@ ContentScraper(Url, HTmlText, browser, XpathPatterns, CssPatterns,
 
 \item{asDataFrame}{boolean, transform scraped data into a Dataframe. default is False (data is returned as List)}
 
+\item{ContainerXpathPat}{character, one XPath pattern selecting the repeating card/container elements (e.g. a comment box, a review or a listing row). When supplied, the grouped extraction mode is enabled: each matched container produces one record, the other XpathPatterns are evaluated relatively to each container, fields are returned in their declared order and a field missing from a container becomes NA. Nested structures matched by ExcludeXpathPat (quotes, ads) are removed node-wise before extraction, so sibling containers cannot share or leak values. Grouped mode always returns a data.frame and is disabled unless a container pattern is provided.}
+
+\item{ContainerCssPat}{character, same as ContainerXpathPat using a CSS selector. Use it together with CssPatterns and ExcludeCSSPat.}
+
 \item{encod}{character, set the weppage character encoding.}
 }
 \value{
-return a named list of scraped content
+return a named list of scraped content. When grouped extraction is enabled
+(ContainerXpathPat/ContainerCssPat supplied) the return value is a
+data.frame with one row per container and one column per pattern, in
+declared order, with NA for missing fields; with several Urls the rows of
+each page are appended in the input order.
 }
 \description{
 ContentScraper
@@ -80,6 +89,16 @@ PatternsName = c("title","comments"), astext = TRUE, ManyPerPattern = TRUE)
 DATA<-ContentScraper(Url = "https://bitcointalk.org/index.php?topic=2334331.0",
 CssPatterns = c("head > title",".post"), ExcludeCSSPat = c(".quote",".quoteheader"),
 PatternsName = c("Title","Replys"), ManyPerPattern = TRUE)
+
+#### Grouped extraction: one record per comment card.
+# Each .comment container becomes a row; author/date/body queries run
+# inside its own subtree, a missing date is NA and nested quotes/ads are
+# removed structurally instead of being stripped by string replacement.
+DATA<-ContentScraper(Url = "https://example.org/comments",
+CssPatterns = c(".author",".date",".body"),
+PatternsName = c("author","date","body"),
+ContainerCssPat = ".comment",
+ExcludeCSSPat = c(".quote",".ads"))
 
 #### Scrape data from web page requiring authentification
 # replace \\@ by @ before running follwing examples
